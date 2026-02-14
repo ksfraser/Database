@@ -150,11 +150,23 @@ class DummyStatement {
     }
     public function fetch($fetchStyle = null) {
         if ($this->result === false || empty($this->result)) return false;
-        return $this->result[0];
+
+		// If a single row was stored as an associative array, return it directly.
+		if (is_array($this->result) && !array_key_exists(0, $this->result)) {
+			return $this->result;
+		}
+
+		return $this->result[0];
     }
     public function fetchColumn($col = 0) {
         if (empty($this->result) || $this->result === false) return false;
-        $row = $this->result[0];
+
+		$row = $this->result;
+		if (is_array($this->result) && array_key_exists(0, $this->result)) {
+			$row = $this->result[0];
+		}
+		if (!is_array($row)) return null;
+
         $vals = array_values($row);
         return $vals[$col] ?? null;
     }
