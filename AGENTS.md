@@ -2,11 +2,20 @@
 
 Operational memory for the KSF FA infrastructure codebase. Files live under
 `~/Documents/ksf_Infrastructure/fa_modules/`. This doc captures cross-module
-architecture findings, active conventions, and decisions. Read this before
-designing or refactoring anything that spans modules.
+architecture **decisions** and findings. Read this before designing or
+refactoring anything that spans modules.
 
-## Current work context (short)
+> **Companion doc:** `AGENTS_ARCH.md` (co-located, hardlinked into each repo)
+> holds the shared module **conventions** and cross-repo engineering standards
+> (module layout, coding/testing standards, dev/deploy workflow, inter-module
+> hook protocols, security-area registry, FA DB gotchas). This file holds only
+> decisions.
 
+## Cross-module facts (at a glance)
+
+- **PHP 7.3 is the cross-module compatibility floor** (current prod runs 7.3 on
+  Fedora 30 until a web container is stood up; the FA container runtime is 7.4).
+  See `AGENTS_ARCH.md` §1.
 - **ksf_FA_Common is now a pure Composer/Packagist package** (v1.0.9), not an FA
   module. It was gutted to a no-op module shell. Owning modules (RBAC, CRM,
   Calendar, HRM, Assets) register/unregister their `ksf_contact_types` on
