@@ -140,6 +140,11 @@ output.
 
 - `_init/config` file is **gzip-compressed** `Key: Value` lines (`Name:`, `Version:`,
   `Description:`), version like `2.4.3-<build>`.
+- **The `Version:` in `_init/config` must match the major version of the FA
+  platform** the module targets (e.g. `2.4.x` for FrontAccounting 2.4). FA uses
+  this to gate module compatibility at install — a mismatched major (e.g. `3.x`
+  vs FA `2.x`) makes the module appear incompatible. Keep the module's own
+  release/build in a separate field; the FA-compat major is what FA checks.
 - `install.sql` schema: hardcoded `0_` prefix; do not use `@TB_PREF@`/`{TB_PREF}`;
   probe existing tables with the bare table name.
 - Cross-module/owned classes live in a Packagist package, not a module dir.
