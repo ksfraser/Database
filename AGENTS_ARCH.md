@@ -98,8 +98,8 @@ Each table gets a `{table}_db.inc` gateway exposing `write_{table}()` /
 - Security section: `define('SS_ksf_FA_<ModuleName>', N << 8);`
 - Security areas: `SA_ksf_FA_<ModuleName>` / `SA_<MODULE>_<ACTION>`.
 - **Security-area numbering registry (single source):** Core FA uses 1–53; KSF
-  modules start at 114. Current highest: `SS_WORKFLOW = 143`. Next available:
-  **144**. Always take the next unused number — never reuse.
+  modules start at 114. Current highest: `SS_GPG = 145` (`SS_DataIntegrity = 144`).
+  Next available: **146**. Always take the next unused number — never reuse.
 
 ## 9. FA page security
 
