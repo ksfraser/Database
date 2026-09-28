@@ -1,9 +1,14 @@
 # AGENTS.md — KSF FrontAccounting Architecture Notes
 
-Operational memory for the KSF FA infrastructure codebase. Files live under
-`~/Documents/ksf_Infrastructure/fa_modules/`. This doc captures cross-module
-architecture **decisions** and findings. Read this before designing or
-refactoring anything that spans modules.
+Operational memory for the KSF FA infrastructure codebase.
+
+Files live under `/home/kevin/Documents/.
+
+Git repositories (dev trees) live under /home/kevin/Documents/<modulename>.
+
+Files deployed for Integration Testing live under ksf_Infrastructure/fa_modules/`.
+This doc captures cross-module architecture **decisions** and findings. 
+Read this before designing or refactoring anything that spans modules.
 
 > **Companion doc:** `AGENTS_ARCH.md` (co-located, hardlinked into each repo)
 > holds the shared module **conventions** and cross-repo engineering standards
@@ -11,20 +16,38 @@ refactoring anything that spans modules.
 > hook protocols, security-area registry, FA DB gotchas). This file holds only
 > decisions.
 
+## ksf_payment_destinations — development tree status
+
+**`~/Documents/FA_PaymentDestinations/` is an ABORTED branch.** Do not develop
+there. That directory is a bind mount (via `~/Documents/ksf_Infrastructure/`)
+that was used for documentation only — it has no `src/`, no `Tests/`, no
+PSR-4 refactoring, and no `@BABOK` traceability annotations. All development
+happened in `~/Documents/ksf_payment_destinations/` which is the primary
+working dev tree.
+
+If you find yourself editing files in `FA_PaymentDestinations/` — STOP and
+switch to `ksf_payment_destinations/` immediately.
+
 ## Cross-module facts (at a glance)
 
 - **PHP 7.3 is the cross-module compatibility floor** (current prod runs 7.3 on
   Fedora 30 until a web container is stood up; the FA container runtime is 7.4).
   See `AGENTS_ARCH.md` §1.
-- **ksf_FA_Common is now a pure Composer/Packagist package** (v1.0.9), not an FA
+- **ksf_FA_Common is now a pure Composer/Packagist package** (v1.0.11), not an FA
   module. It was gutted to a no-op module shell. Owning modules (RBAC, CRM,
   Calendar, HRM, Assets) register/unregister their `ksf_contact_types` on
   activate/deactivate via embedded `sql/retag_contact_types.sql`.
+- **ComposerDependencies bootstrap is per-module**: modules copy
+  `ksf_fa_common/src/Utils/ComposerDependencies.template.php` to their root and
+  replace `MODULENAME` in the namespace; the guard is namespace-scoped so unrenamed
+  (forgotten `MODULENAME`) copies — and the package's own `Common\Utils` copy — can
+  never redeclare or clobber. Details in `AGENTS_ARCH.md` §7.
 - **Square**: composer.json `config.platform.php = 7.4.33` pinned (commit
   `b0ef4da`) for the PHP 7.4 container; lock regeneration is blocked locally on
   the private `ksfraser/import-staging` package.
 - **FA_ProductAttributes issue #52 (child not detected as read-only)** root cause
-  found: two parallel, un-unified parent-relationship mechanisms (see below).
+  found: two parallel, un-unified parent-relationship mechanisms. Full write-up
+  is in that repo's `AGENTS.local.md` (migrated out of this file).
 
 ## The "generic data-dictionary + query-builder" direction (active design)
 
@@ -150,49 +173,110 @@ NEXT STEPS (cross-module): port other modules' DAOs onto `DbConnectionInterface`
   per-row CRUD. Per-row CRUD hooks are not provided by core; they come from the
   traits/adapters above.
 
-## FA_ProductAttributes issue #52 root cause (verified)
+## FA_ProductAttributes — module/tree-specific findings moved to its own repo
 
-Two parallel, un-unified parent-relationship mechanisms:
+Anything FA_ProductAttributes-specific that used to live here (issue #52 root
+cause, Generate Combinations semantics, the ksf-fa blank-page/bootstrap logs for
+that module) has been migrated OUT of this shared file into the repo's
+`AGENTS.local.md` (`~/Documents/FA_ProductAttributes/AGENTS.local.md`). Working
+on that module? Read that file. This shared doc keeps only cross-module
+decisions and mechanics.
 
-| Concern | `product_hierarchy` (via `ProductAttributesDao`) | `product_attribute_assignments.parent_stock_id` (via `VariationsDao`) |
-|---|---|---|
-| Writes | `setProductParent($child,$parent)` (INSERT…ON DUP UPD / DELETE) | `setParentRelationship()` (called by `CreateChildAction`) AND `addAssignment(...,$parentStockId)` |
-| Reads | `getProductParent()` — **used by `VariationsTab` for `$isChild` detection** | `getProductVariations()`, `isVariation()` |
-| Populated on CreateChildAction? | **NO** — nothing calls it | **YES** |
+## FA extension install & activation mechanics (verified 2026-09, cross-module)
 
-- `VariationsDao::setParentRelationship()` (VariationsDao.php:334) writes
-  `product_attribute_assignments.parent_stock_id`.
-- `ProductAttributesDao::setProductParent()`/`getProductParent()`
-  (ProductAttributesDao.php:392/416) write/read `product_hierarchy`.
-- `CreateChildAction::handle()` calls `variationsDao->setParentRelationship($childId,
-  $stockId)` (CreateChildAction.php:88) but NEVER `setProductParent()`.
-- `VariationsTab::renderTabContent()` sets `$isChild = !empty($this->dao->getProductParent($stockId))`
-  (VariationsTab.php, ~line 51-54) and renders read-only + hides buttons when child.
-- Net: generated children (`auto-gas-L-11-36-Ind` etc.) are registered only in
-  `product_attribute_assignments`, so `product_hierarchy` is empty for them →
-  `getProductParent()` returns null → `$isChild` false → read-only protection never
-  engages → issue #52/#45 reproduce.
-- `product_hierarchy` DOES get rows when someone manually sets a parent via the
-  Product Types UI (`UpdateProductTypesAction`, `ProductAttributesTabController`).
+How FA 2.4.x actually installs/activates third-party extensions — applies to
+every ksf_* module, and is why "clicks on the Extensions page" silently do
+nothing on a fresh mount. Verified against `fa/2.4.3` source + live UAT box.
 
-Fix implications: the create-child path must also write `product_hierarchy` (call
-`setProductParent`), OR the tab's child detection must fall back to
-`product_attribute_assignments.parent_stock_id` / `isVariation()`.
+**Registries** — two PHP files of `$installed_extensions` arrays:
+- GLOBAL: `company/installed_extensions.php` (what "Local<pkg>" and the
+  repo-index install write to).
+- PER-COMPANY: `company/<id>/installed_extensions.php` — this is what
+  activation (Refresh/Update) actually reads and rewrites.
+Both must be writable by the container's PHP/MySQL UID (see the per-instance
+bind fix in the repo-local notes).
 
-## SQL prefix / install conventions (from earlier work)
+**Registering a local module**: the `Local<pkg>` button
+(`local_extension()` in `admin/inst_module.php`) hardcodes
+`'version' => '-', 'available' => ''` and copies nothing from the module's
+`_init/config`. It includes the module's `hooks.php` and calls
+`install_extension(false)`.
 
-- SQL files use a hardcoded `0_` prefix — FA `db_import` does NOT resolve
-  `@TB_PREF@`. PHP code uses the `TB_PREF` constant. Documented in
-  `ksf_FA_Common/MODULE_DIRECTORY.md` §Table Prefix Convention.
-- Assets module SQL convention: `update_databases()` paths are relative to `sql/`
-  (uses `'install.sql'`, not `'sql/install.sql'`); others prefix with `sql/`.
-- Retag/contact-type ownership SQL lives inside each owning module's `sql/`
-  (`retag_contact_types.sql`), idempotent, wired into `activate_extension()`'s
-  `$updates`. Never in an external checklist.
+**Activivating** (the "Activated for '<company>'" view, `extset=<id>`):
+- Checkboxes are named `Active<i>` where `$i` is the index in the MERGED +
+  natural-sorted GLOBAL registry list, NOT the company registry. Map each row's
+  checkbox to its package name from the page HTML before POSTing.
+- POST `extset=<id>&Refresh=Update&Active<i>=1` (needs the current `_token`).
+- Gate: `check_src_ext_version()` in `includes/packages.inc` rejects any
+  version with a leading component below the app's (`2.4.3`). **A version of
+  `'-'` ALWAYS fails** → "incompatible with current application version and
+  cannot be activated". Private/local modules therefore MUST carry a numeric
+  version in the registries (manually set what `_init/config` declares, e.g.
+  `'2.4.4'`), the same value the repo index would have supplied.
+- `activate_hooks($pkg, $comp, true)` then calls the module's
+  `hooks_<pkg>::activate_extension($comp, false)`.
 
-## Cross-module contracts principle
+**SQL prefix convention in module `sql/` files**: the install engine
+`db_import()` (`admin/db/maintenance_db.inc`) replaces ONLY the literal
+`0_` → `TB_PREF`. It does NOT touch `{TB_PREF}` or `@TB_PREF@` (those only
+work in ksf_FA_Common's own hand-rolled `install_schema()` helper). **All
+extension `sql/*.sql` for the FA install path must use literal `0_` table
+names** — `{TB_PREF}` yields "Table 'ksf_fa.{TB_PREF}x' doesn't exist".
+(FA_ProductAttributes had 4 files with `{TB_PREF}`; fixed to `0_` in commit
+`b9f484e`.)
 
-- Any ksf module must be standalone; class availability must never be gated on
-  another module's activation state.
-- Cross-module contracts/classes live in a Packagist package (e.g. ksf_FA_Common /
-  future ksf_common_db), NOT in a module dir.
+**Login gotcha** (`includes/session.inc:545`): without `company_login_name`
+in the POST, login always fails with 401 "Incorrect Password" even when the
+user/password is right. Send `company_login_name=<id>` (+ `_token` from the
+login page).
+
+**Cross-module activation hazard — duplicate ksf-fa-common class load**:
+`ksf_FA_Common` ships `src/autoload.php` as the canonical loader for the
+`ksfraser\FrontAccounting\Common\*` namespaces and explicitly must NOT have a
+PSR-4 pointing at a vendored copy. If another module's Composer autoloader
+(vendored `ksfraser/ksf-fa-common`, e.g. FA_ProductAttributes') loads those
+classes FIRST, then activating ksf_FA_Common (constructor `require_once
+src/autoload.php`) redeclares the already-loaded classes → fatal that kills
+the extension page mid-render (page shows footer only, no message, no
+registry write). Symptom: activation "does nothing". On the UAT box the
+workaround was manual activation (schema via raw SQL, `active => true` set
+directly in both registries). Proper fix is order-independent guarded
+loading in `src/autoload.php`.
+
+**Rootless podman single-file binds silently absent — the "nothing happens"
+activation trap (diagnosed 2026-09)**: on the rootless ksf_fa instance (podman
+under user `kevin`), the ksf-fa container appeared to have all 6 binds per
+`podman inspect`, but the **single-file** binds (config_db.php,
+installed_extensions.php, default.css) were NOT effective — `/proc/mounts` showed
+only the 3 directory binds. So FA wrote the RO git-tracked
+`FA/2.4.3/installed_extensions.php` as the global registry and failed with
+"Cannot open the extension setup file '../installed_extensions.php' for writing."
+Root cause was stale recipes with lowercase `../fa/…` paths + a `fa_data` named
+volume that didn't exist. Fix = recreate the container; a fresh create applies
+the file binds (legacy `compose.yaml` deleted, `start-fa.sh` rewritten). Rule:
+after any container create/modify, verify with
+`podman exec <c> grep -l config_db /proc/mounts` — don't trust `inspect`.
+
+**FA theme customization (decided 2026-09, cross-module)**
+
+Per-pod theme overlays **mirror the native FA tree** (`/var/www/html`), so the
+mount paths are the real FA locations. Inside each pod dir
+(`FA/<pod>/themes/default/`) we keep:
+
+- `default.css` — the **canonical** file, bind-mounted RW into the container at
+  `/var/www/html/themes/default/default.css`. This is what the running app
+  loads (`user_theme()` default is `'default'`; CSS is
+  `$path_to_root/themes/default/default.css` via `includes/main.inc`).
+- `default.css.default` / `default.css.red` / `default.css.yellow` — **unmounted**
+  variants. On a fresh environment, copy the chosen variant onto the canonical
+  `default.css`; the recipe (ansible role `ksf.frontaccounting`, `fa_theme` var,
+  staged by `tasks/theme.yml`) automates this before container start.
+
+Decisions: private modules mount **only** the `default.css` file; do not overlay
+`renderer.php`/`index.php`/`images/` (those stay read-only from the `2.4.3`
+mount). Target look: **Integration = RED**, **UAT = YELLOW**, default = original
+BLUE. The recipe applies `default.css.<fa_theme>` → `default.css` (never edits
+the variants). Container mounts were historically split across
+`podman/ksf-compose.yaml` vs the ansible role's `frontaccounting-container.yml`;
+the two recipes currently differ — reconcile before trusting either as source
+of truth.
